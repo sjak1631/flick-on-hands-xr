@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- 手の関節トラッキング（キーボードを載せる手と、打鍵する指先） -->
+    <uses-permission android:name="android.permission.HAND_TRACKING" />
+    <!-- 頭の位置（手のひらがこちらを向いているかの判定に使う） -->
+    <uses-permission android:name="android.permission.HEAD_TRACKING" />
+
+    <uses-feature
+        android:name="android.software.xr.api.spatial"
+        android:required="true" />
+
+    <application
+        android:allowBackup="false"
+        android:label="@string/app_name"
+        android:supportsRtl="true"
+        android:theme="@android:style/Theme.Material.NoActionBar">
+
+        <!-- 手に追従するパネルを自由に配置するため Full Space で起動する -->
+        <property
+            android:name="android.window.PROPERTY_XR_ACTIVITY_START_MODE"
+            android:value="XR_ACTIVITY_START_MODE_FULL_SPACE_MANAGED" />
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="true">
+            <layout
+                android:defaultWidth="900dp"
+                android:defaultHeight="640dp" />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>
