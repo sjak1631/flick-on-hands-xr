@@ -41,3 +41,12 @@ dependencies {
     implementation(libs.androidx.xr.arcore)
     testImplementation(libs.junit)
 }
+
+// 記録した軌跡の再生（ReplayTest）: ./gradlew testDebugUnitTest --tests '*ReplayTest*' -PreplayDir=logs
+tasks.withType<Test>().configureEach {
+    providers.gradleProperty("replayDir").orNull?.let { dir ->
+        systemProperty("replayDir", rootProject.file(dir).absolutePath)
+        outputs.upToDateWhen { false }
+        testLogging.showStandardStreams = true
+    }
+}

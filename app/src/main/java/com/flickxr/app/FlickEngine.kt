@@ -47,6 +47,12 @@ class FlickEngine(
         return action
     }
 
+    /** 押下を破棄して、かなモードに戻す。 */
+    fun resetMode() {
+        press = null
+        mode = InputMode.KANA
+    }
+
     /** トラッキングを見失ったときなど、確定せずに押下を破棄する。 */
     fun cancel() {
         press = null

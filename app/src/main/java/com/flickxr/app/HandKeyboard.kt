@@ -44,14 +44,19 @@ class HandKeyboard(
     private val settings: StateFlow<KeyboardSettings>,
     private val onAction: (KeyAction) -> Unit,
     private val onStatus: (TrackingStatus) -> Unit,
+    /** 指先がキーボードの範囲の上にあるフレームごとに、手のひらの面（関節の中心を通る面）からの指先の高さを渡す */
+    private val onTipSample: (Float) -> Unit = {},
+    /** 毎フレーム、判定に渡した指先と判定の結果を渡す（軌跡の記録用）。アクションは [onAction] より先に渡す */
+    private val onTipFrame: (tMs: Long, tip: TipFrame?, touching: Boolean, action: KeyAction?) -> Unit = { _, _, _, _ -> },
 ) {
-    private val engine = FlickEngine(BASE_SIZE, BASE_SIZE)
-    private val view = FlickKeyboardView(context, engine)
+    private val detector = SwitchingDetector(settings.value.detector)
+    private val view = FlickKeyboardView(context, detector)
     private lateinit var panel: PanelEntity
     private var panelSize = FloatSize2d(BASE_SIZE, BASE_SIZE)
 
-    private var touching = false
     private var palmFacing = false
+    /** 前のフレームで判定に渡した入力側の手の状態。左右どちらの手の更新でもフレームが来るので、入力側が更新されたときだけ判定に渡す */
+    private var lastTypeHand: Hand.State? = null
     private var smoothedPalm: Frame? = null
     private var lastStatusAt = 0L
     private var job: Job? = null
@@ -90,25 +95,33 @@ class HandKeyboard(
         }
     }
 
+    fun resetMode() {
+        detector.resetMode()
+        view.invalidate()
+    }
+
     fun stop() {
         job?.cancel()
         if (::panel.isInitialized) panel.parent = null
     }
 
     private fun onFrame(kbHand: Hand.State, typeHand: Hand.State, isLeftKeyboard: Boolean, s: KeyboardSettings) {
+        val newTip = typeHand !== lastTypeHand
+        lastTypeHand = typeHand
+        detector.select(s.detector)
         val kbTracked = kbHand.trackingState == TrackingState.TRACKING
         val typeTracked = typeHand.trackingState == TrackingState.TRACKING
         val palm = if (kbTracked) palmFrame(kbHand, isLeftKeyboard)?.let(::smoothPalm) else null
 
         if (palm == null) {
-            hide()
+            hide(newTip)
             publish(TrackingStatus(kbTracked, typeTracked))
             return
         }
 
         palmFacing = isFacingHead(palm)
         if (!palmFacing) {
-            hide()
+            hide(newTip)
             publish(TrackingStatus(true, typeTracked, palmFacing = false))
             return
         }
@@ -116,35 +129,31 @@ class HandKeyboard(
         val kb = keyboardFrame(palm, s)
         val width = palmWidth * s.widthScale
         val height = palmLength * s.heightScale
-        engine.widthMeters = width
-        engine.heightMeters = height
-        engine.flickThresholdMeters = minOf(width / FlickLayout.COLS, height / FlickLayout.ROWS) * 0.4f
         placePanel(kb, width, height)
+        if (!newTip) return
 
-        val tip = if (typeTracked) typeHand.handJoints[HandJointType.INDEX_TIP]?.translation else null
-        var heightMm: Float? = null
-        if (tip == null) {
-            engine.cancel()
-            touching = false
-            view.cursor = null
-        } else {
-            val l = kb.toLocal(tip)
-            val x = l.x / width + 0.5f
-            val y = 0.5f - l.y / height
-            val h = l.z
-            heightMm = h * 1000f
-
-            // ヒステリシス付きの接触判定（トラッキングの揺れで連打にならないように）
-            val inReach = x in -0.15f..1.15f && y in -0.15f..1.15f && h > -0.04f
-            touching = if (touching) inReach && h < s.touchMeters + RELEASE_MARGIN else inReach && h < s.touchMeters
-
-            engine.onFrame(x, y, touching)?.let(onAction)
-            view.cursor = if (h < 0.06f && inReach) FlickKeyboardView.Cursor(x, y, h.coerceAtLeast(0f), touching) else null
+        val tipPos = if (typeTracked) typeHand.handJoints[HandJointType.INDEX_TIP]?.translation else null
+        val tip = tipPos?.let {
+            val l = kb.toLocal(it)
+            TipFrame(nowMs(), l.x / width + 0.5f, 0.5f - l.y / height, l.z, width, height, s.touchMeters)
         }
+        if (tipPos != null && tip != null && tip.x in 0f..1f && tip.y in 0f..1f) {
+            palm.toLocal(tipPos).z.takeIf { it < 0.06f }?.let(onTipSample)
+        }
+        feed(tip)
+        view.cursor = tip?.takeIf { it.h < 0.06f && it.inReach }?.let { FlickKeyboardView.Cursor(it.x, it.y, it.h.coerceAtLeast(0f), detector.touching) }
 
         view.invalidate()
-        publish(TrackingStatus(true, typeTracked, palmFacing = true, fingerHeightMm = heightMm, touching = touching))
+        publish(TrackingStatus(true, typeTracked, palmFacing = true, fingerHeightMm = tip?.h?.times(1000f), touching = detector.touching))
     }
+
+    private fun feed(tip: TipFrame?) {
+        val action = detector.onFrame(tip)
+        onTipFrame(tip?.tMs ?: nowMs(), tip, detector.touching, action)
+        action?.let(onAction)
+    }
+
+    private fun nowMs() = System.nanoTime() / 1_000_000
 
     /**
      * 手首・中指付け根・人差し指/小指付け根の位置から手のひらの面を求める。
@@ -216,9 +225,8 @@ class HandKeyboard(
         if (!panel.isEnabled()) panel.setEnabled(true)
     }
 
-    private fun hide() {
-        engine.cancel()
-        touching = false
+    private fun hide(newTip: Boolean) {
+        if (newTip) feed(null)
         view.cursor = null
         if (::panel.isInitialized && panel.isEnabled()) panel.setEnabled(false)
     }
@@ -236,7 +244,6 @@ class HandKeyboard(
         private const val PALM_WIDTH_FACTOR = 1.15f
         private const val PALM_LENGTH_FACTOR = 0.8f
         private const val SIZE_SMOOTHING = 0.05f
-        private const val RELEASE_MARGIN = 0.008f
         private const val SMOOTHING = 0.6f
         private const val FACING_SHOW_COS = 0.45f
         private const val FACING_HIDE_COS = 0.2f

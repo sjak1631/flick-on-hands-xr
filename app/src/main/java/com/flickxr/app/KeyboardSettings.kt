@@ -7,7 +7,7 @@ import androidx.xr.runtime.math.Vector3
  * キーボードの置き方。手のひら座標系（X: 正面から見て右、Y: 手首→指先、Z: 手のひらから外向き）で持つので、
  * 手を動かしても同じ場所に付いてくる。
  *
- * 現状はメインパネルのスライダーで手動調整する。最適な値の自動推定（キャリブレーション）は未解決（README 参照）。
+ * メインパネルのスライダーで手動調整するか、フレーズ入力の試行を繰り返して [Calibration] で自動調整する。
  */
 data class KeyboardSettings(
     /** true: 左手のひらにキーボード・右手で入力 / false: その逆 */
@@ -29,6 +29,8 @@ data class KeyboardSettings(
     val yawDegrees: Float = 0f,
     /** 指先がキーボード面からこの高さ未満になったら「接触」 */
     val touchMeters: Float = 0.010f,
+    /** 打鍵の判定のしかた */
+    val detector: DetectorType = DetectorType.SLIDE,
 ) {
     val offset: Vector3 get() = Vector3(offsetX, offsetY, offsetZ)
 
@@ -39,5 +41,5 @@ data class KeyboardSettings(
             Quaternion.fromAxisAngle(Vector3(0f, 0f, 1f), rollDegrees)
 
     /** 位置・回転・大きさだけを初期値に戻す。 */
-    fun resetPlacement() = KeyboardSettings(keyboardOnLeft = keyboardOnLeft, touchMeters = touchMeters)
+    fun resetPlacement() = KeyboardSettings(keyboardOnLeft = keyboardOnLeft, touchMeters = touchMeters, detector = detector)
 }

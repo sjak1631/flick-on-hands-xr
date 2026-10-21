@@ -10,10 +10,10 @@ import android.view.MotionEvent
 import android.view.View
 
 /**
- * 手のひらに投影するフリックキーボードの描画。入力判定は [FlickEngine] / [HandKeyboard] が行い、
+ * 手のひらに投影するフリックキーボードの描画。入力判定は [KeyDetector] が行い、
  * このビューは状態を描くだけ（パネルへのシステムのタッチ入力は無視する）。
  */
-class FlickKeyboardView(context: Context, private val engine: FlickEngine) : View(context) {
+class FlickKeyboardView(context: Context, private val detector: KeyDetector) : View(context) {
 
     data class Cursor(val x: Float, val y: Float, val heightMeters: Float, val touching: Boolean)
 
@@ -56,8 +56,8 @@ class FlickKeyboardView(context: Context, private val engine: FlickEngine) : Vie
 
         canvas.drawRoundRect(kbRect, corner * 1.5f, corner * 1.5f, bgPaint)
         val pad = minOf(cw, ch) * 0.05f
-        val press = engine.press
-        for ((r, row) in engine.rows.withIndex()) {
+        val press = detector.press
+        for ((r, row) in detector.rows.withIndex()) {
             for ((c, key) in row.withIndex()) {
                 rect.set(kbRect.left + c * cw + pad, kbRect.top + r * ch + pad, kbRect.left + (c + 1) * cw - pad, kbRect.top + (r + 1) * ch - pad)
                 val pressed = press != null && press.row == r && press.col == c

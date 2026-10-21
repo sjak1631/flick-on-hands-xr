@@ -18,6 +18,7 @@ import androidx.xr.scenecore.scene
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.io.File
 import kotlin.coroutines.EmptyCoroutineContext
 
 class MainActivity : ComponentActivity() {
@@ -30,6 +31,8 @@ class MainActivity : ComponentActivity() {
     private val buffer = TextBuffer()
     private var keyboard: HandKeyboard? = null
     private var started = false
+    private lateinit var calibration: Calibration
+    private var log: SessionLog? = null
 
     private val permissions = arrayOf(PERM_HAND, PERM_HEAD)
 
@@ -44,6 +47,12 @@ class MainActivity : ComponentActivity() {
         val store = SettingsStore(this)
         settings.value = store.load()
         lifecycleScope.launch { settings.collect(store::save) }
+        calibration = Calibration(
+            scope = lifecycleScope,
+            settings = settings,
+            onTrialStart = { keyboard?.resetMode() },
+            onResult = ::logTrial,
+        )
 
         setContent {
             MainScreen(
@@ -51,6 +60,7 @@ class MainActivity : ComponentActivity() {
                 status = status,
                 settings = settings,
                 message = message,
+                calibration = calibration,
                 onClear = {
                     buffer.clear()
                     text.value = ""
@@ -101,10 +111,16 @@ class MainActivity : ComponentActivity() {
             session = session,
             settings = settings,
             onAction = { action ->
-                buffer.apply(action)
-                text.value = buffer.text
+                if (!calibration.onAction(action)) {
+                    buffer.apply(action)
+                    text.value = buffer.text
+                }
             },
             onStatus = { status.value = it },
+            onTipSample = calibration::onTipSample,
+            onTipFrame = { t, tip, touching, action ->
+                calibration.recordingAttempt?.let { logFrame(it, t, tip, touching, action) }
+            },
         ).also { it.start(lifecycleScope) }
         message.update { "手のひらを顔に向けるとキーボードが出ます" }
     }
@@ -115,7 +131,30 @@ class MainActivity : ComponentActivity() {
         message.value = "クリップボードにコピーしました"
     }
 
+    /**
+     * 今の自動調整のセッションの記録（`files/sessions/<開始時刻>/`）。後で判定を再生して比べたり、
+     * 誤入力の原因を切り分けたりするため。
+     */
+    private fun sessionLog(): SessionLog {
+        val dir = File(getExternalFilesDir("sessions"), calibration.sessionId.toString())
+        log?.takeIf { it.dir == dir }?.let { return it }
+        log?.close()
+        return SessionLog(dir).also { log = it }
+    }
+
+    private fun logFrame(attempt: Int, tMs: Long, tip: TipFrame?, touching: Boolean, action: KeyAction?) {
+        runCatching { sessionLog().frame(attempt, tMs, tip, touching, action) }
+            .onFailure { Log.e(TAG, "failed to write frame log", it) }
+    }
+
+    private fun logTrial(r: TrialResult) {
+        Log.i(TAG, "calibration trial $r")
+        runCatching { sessionLog().trial(r, calibration.state.value.palmSurface) }
+            .onFailure { Log.e(TAG, "failed to write calibration log", it) }
+    }
+
     override fun onDestroy() {
+        log?.close()
         keyboard?.stop()
         super.onDestroy()
     }

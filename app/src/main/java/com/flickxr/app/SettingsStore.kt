@@ -20,6 +20,7 @@ class SettingsStore(context: Context) {
             tiltDegrees = f("tiltDegrees", d.tiltDegrees),
             yawDegrees = f("yawDegrees", d.yawDegrees),
             touchMeters = f("touchMeters", d.touchMeters),
+            detector = DetectorType.entries.find { it.name == prefs.getString("detector", null) } ?: d.detector,
         )
     }
 
@@ -35,6 +36,7 @@ class SettingsStore(context: Context) {
             .putFloat("tiltDegrees", s.tiltDegrees)
             .putFloat("yawDegrees", s.yawDegrees)
             .putFloat("touchMeters", s.touchMeters)
+            .putString("detector", s.detector.name)
             .apply()
     }
 }
