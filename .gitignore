@@ -9,3 +9,6 @@ captures/
 *.aab
 .DS_Store
 /logs/
+/ml/.venv/
+/ml/data/
+__pycache__/
