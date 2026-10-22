@@ -120,10 +120,7 @@ fun MainScreen(
                         Text("キーボードの調整", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
                         OutlinedButton(onClick = { set { it.resetPlacement() } }) { Text("リセット") }
                     }
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(selected = s.keyboardOnLeft, onClick = { set { it.copy(keyboardOnLeft = true) } }, label = { Text(if (s.keyboardOnLeft) "✓ 左手に表示" else "左手に表示") })
-                        FilterChip(selected = !s.keyboardOnLeft, onClick = { set { it.copy(keyboardOnLeft = false) } }, label = { Text(if (!s.keyboardOnLeft) "✓ 右手に表示" else "右手に表示") })
-                    }
+                    // キーボードは右手に固定（左手で入力）。学習のデータとモデルを片側に揃えるため（SettingsStore で常に右にする）
 
                     Section("打鍵の判定")
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

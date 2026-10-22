@@ -10,8 +10,8 @@ import androidx.xr.runtime.math.Vector3
  * メインパネルのスライダーで手動調整するか、フレーズ入力の試行を繰り返して [Calibration] で自動調整する。
  */
 data class KeyboardSettings(
-    /** true: 左手のひらにキーボード・右手で入力 / false: その逆 */
-    val keyboardOnLeft: Boolean = true,
+    /** true: 左手のひらにキーボード・右手で入力 / false: その逆。当面は常に false（[SettingsStore] で固定） */
+    val keyboardOnLeft: Boolean = false,
     /** 左右（+ で右） */
     val offsetX: Float = 0f,
     /** 上下（+ で指先側） */

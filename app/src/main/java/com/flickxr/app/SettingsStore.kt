@@ -10,7 +10,8 @@ class SettingsStore(context: Context) {
         val d = KeyboardSettings()
         fun f(key: String, def: Float) = prefs.getFloat(key, def)
         return KeyboardSettings(
-            keyboardOnLeft = prefs.getBoolean("keyboardOnLeft", d.keyboardOnLeft),
+            // 当面は右手に固定（左手で入力）。学習のデータとモデルを片側に揃えるため（これまでの記録もほとんど右手）
+            keyboardOnLeft = false,
             offsetX = f("offsetX", d.offsetX),
             offsetY = f("offsetY", d.offsetY),
             offsetZ = f("offsetZ", d.offsetZ),
