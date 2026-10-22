@@ -49,4 +49,5 @@ tasks.withType<Test>().configureEach {
         outputs.upToDateWhen { false }
         testLogging.showStandardStreams = true
     }
+    providers.gradleProperty("candMoveRepress").orNull?.let { systemProperty("candMoveRepress", it) }
 }
