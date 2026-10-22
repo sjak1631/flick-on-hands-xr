@@ -20,6 +20,9 @@ class FlickKeyboardView(context: Context, private val detector: KeyDetector) : V
     /** 指先カーソル（正規化座標）。null なら非表示。 */
     var cursor: Cursor? = null
 
+    /** false の間は、押している間に十字に出すフリックの候補を出さない（データ収集中は気が取られるので） */
+    var showPopup: () -> Boolean = { true }
+
     private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(110, 10, 14, 24) }
     private val keyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(150, 50, 58, 78) }
     private val fnKeyPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(150, 32, 38, 54) }
@@ -66,7 +69,7 @@ class FlickKeyboardView(context: Context, private val detector: KeyDetector) : V
             }
         }
 
-        if (press != null) drawPopup(canvas, press, cw, ch, corner)
+        if (press != null && showPopup()) drawPopup(canvas, press, cw, ch, corner)
         cursor?.let { drawCursor(canvas, it, cw) }
     }
 

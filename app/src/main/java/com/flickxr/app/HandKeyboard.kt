@@ -48,9 +48,15 @@ class HandKeyboard(
     private val onTipSample: (Float) -> Unit = {},
     /** 毎フレーム、判定に渡した指先と判定の結果を渡す（軌跡の記録用）。アクションは [onAction] より先に渡す */
     private val onTipFrame: (tMs: Long, tip: TipFrame?, touching: Boolean, action: KeyAction?) -> Unit = { _, _, _, _ -> },
+    /** true を返す間、入力側の手が更新されるたびに [onJoints] で両手の関節などを渡す（学習用の記録） */
+    private val recordJoints: () -> Boolean = { false },
+    /** [JOINT_COLUMNS] の順の値（m、ARCore の perception space）。取れない値は NaN */
+    private val onJoints: (tMs: Long, kbTracked: Boolean, typeTracked: Boolean, values: FloatArray) -> Unit = { _, _, _, _ -> },
+    /** false の間は、押している間のフリックの候補を出さない */
+    showPopup: () -> Boolean = { true },
 ) {
     private val detector = SwitchingDetector(settings.value.detector)
-    private val view = FlickKeyboardView(context, detector)
+    private val view = FlickKeyboardView(context, detector).also { it.showPopup = showPopup }
     private lateinit var panel: PanelEntity
     private var panelSize = FloatSize2d(BASE_SIZE, BASE_SIZE)
 
@@ -109,19 +115,23 @@ class HandKeyboard(
         val newTip = typeHand !== lastTypeHand
         lastTypeHand = typeHand
         detector.select(s.detector)
+        val t = nowMs()
         val kbTracked = kbHand.trackingState == TrackingState.TRACKING
         val typeTracked = typeHand.trackingState == TrackingState.TRACKING
-        val palm = if (kbTracked) palmFrame(kbHand, isLeftKeyboard)?.let(::smoothPalm) else null
+        val rawPalm = if (kbTracked) palmFrame(kbHand, isLeftKeyboard) else null
+        val palm = rawPalm?.let(::smoothPalm)
 
         if (palm == null) {
-            hide(newTip)
+            if (newTip) logJoints(t, kbHand, typeHand, kbTracked, typeTracked, rawPalm, null)
+            hide(newTip, t)
             publish(TrackingStatus(kbTracked, typeTracked))
             return
         }
 
         palmFacing = isFacingHead(palm)
         if (!palmFacing) {
-            hide(newTip)
+            if (newTip) logJoints(t, kbHand, typeHand, kbTracked, typeTracked, rawPalm, null)
+            hide(newTip, t)
             publish(TrackingStatus(true, typeTracked, palmFacing = false))
             return
         }
@@ -131,26 +141,47 @@ class HandKeyboard(
         val height = palmLength * s.heightScale
         placePanel(kb, width, height)
         if (!newTip) return
+        logJoints(t, kbHand, typeHand, kbTracked, typeTracked, rawPalm, kb)
 
         val tipPos = if (typeTracked) typeHand.handJoints[HandJointType.INDEX_TIP]?.translation else null
         val tip = tipPos?.let {
             val l = kb.toLocal(it)
-            TipFrame(nowMs(), l.x / width + 0.5f, 0.5f - l.y / height, l.z, width, height, s.touchMeters)
+            TipFrame(t, l.x / width + 0.5f, 0.5f - l.y / height, l.z, width, height, s.touchMeters)
         }
         if (tipPos != null && tip != null && tip.x in 0f..1f && tip.y in 0f..1f) {
             palm.toLocal(tipPos).z.takeIf { it < 0.06f }?.let(onTipSample)
         }
-        feed(tip)
+        feed(tip, t)
         view.cursor = tip?.takeIf { it.h < 0.06f && it.inReach }?.let { FlickKeyboardView.Cursor(it.x, it.y, it.h.coerceAtLeast(0f), detector.touching) }
 
         view.invalidate()
         publish(TrackingStatus(true, typeTracked, palmFacing = true, fingerHeightMm = tip?.h?.times(1000f), touching = detector.touching))
     }
 
-    private fun feed(tip: TipFrame?) {
+    private fun feed(tip: TipFrame?, t: Long) {
         val action = detector.onFrame(tip)
-        onTipFrame(tip?.tMs ?: nowMs(), tip, detector.touching, action)
+        onTipFrame(t, tip, detector.touching, action)
         action?.let(onAction)
+    }
+
+    private fun logJoints(t: Long, kbHand: Hand.State, typeHand: Hand.State, kbTracked: Boolean, typeTracked: Boolean, rawPalm: Frame?, kb: Frame?) {
+        if (!recordJoints()) return
+        val v = FloatArray(JOINT_COLUMNS.size) { Float.NaN }
+        var i = 0
+        v[i++] = palmWidth
+        v[i++] = palmLength
+        for (f in listOf(rawPalm, kb)) for (vec in listOf(f?.center, f?.right, f?.up, f?.normal)) {
+            v[i++] = vec?.x ?: Float.NaN
+            v[i++] = vec?.y ?: Float.NaN
+            v[i++] = vec?.z ?: Float.NaN
+        }
+        for (hand in listOf(kbHand, typeHand)) for (j in HandJointType.entries) {
+            val p = hand.handJoints[j]?.translation
+            v[i++] = p?.x ?: Float.NaN
+            v[i++] = p?.y ?: Float.NaN
+            v[i++] = p?.z ?: Float.NaN
+        }
+        onJoints(t, kbTracked, typeTracked, v)
     }
 
     private fun nowMs() = System.nanoTime() / 1_000_000
@@ -225,8 +256,8 @@ class HandKeyboard(
         if (!panel.isEnabled()) panel.setEnabled(true)
     }
 
-    private fun hide(newTip: Boolean) {
-        if (newTip) feed(null)
+    private fun hide(newTip: Boolean, t: Long) {
+        if (newTip) feed(null, t)
         view.cursor = null
         if (::panel.isInitialized && panel.isEnabled()) panel.setEnabled(false)
     }
@@ -240,6 +271,17 @@ class HandKeyboard(
 
     companion object {
         private const val TAG = "HandKeyboard"
+
+        /**
+         * 学習用の記録の列。手のひらの実測サイズ、平滑化前の手のひらの面（palm_*）とキーボード面（kb_*）の
+         * 原点と軸、キーボード側（kbHand_*）と入力側（typeHand_*）の全関節の位置。
+         */
+        val JOINT_COLUMNS: List<String> = buildList {
+            add("palmWidth")
+            add("palmLength")
+            for (f in listOf("palm", "kb")) for (a in listOf("center", "right", "up", "normal")) for (c in "xyz") add("${f}_${a}_$c")
+            for (h in listOf("kbHand", "typeHand")) for (j in HandJointType.entries) for (c in "xyz") add("${h}_${j.name}_$c")
+        }
         private const val BASE_SIZE = 0.08f
         private const val PALM_WIDTH_FACTOR = 1.15f
         private const val PALM_LENGTH_FACTOR = 0.8f

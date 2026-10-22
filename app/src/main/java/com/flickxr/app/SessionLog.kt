@@ -2,39 +2,54 @@ package com.flickxr.app
 
 import java.io.BufferedWriter
 import java.io.File
+import kotlin.math.roundToInt
 
 /**
- * 自動調整 1 回分（セッション）の記録。後から判定を JVM で再生して比べるために、フレームごとの指先も残す。
+ * 自動調整・練習・データ収集 1 回分（セッション）の記録。後から判定を JVM で再生したり、学習に使ったりするために、
+ * フレームごとの指先と関節も残す。ファイルは書き込みがあったものだけ作る。
  *
- * - `frames.csv`：フレーズ入力中の 1 フレーム 1 行。attempt は試行ごと（やり直しも別）の通し番号
- * - `trials.csv`：最後まで終えた試行の結果。やり直した・中止した試行は行がない
+ * - `frames.csv`：記録中の 1 フレーム 1 行（判定に渡した指先と判定の結果）。attempt は試行ごと（やり直しも別）の通し番号
+ * - `joints.csv`：同じフレームの両手の全関節など（[HandKeyboard.JOINT_COLUMNS]）。位置は 1e-5 m 単位の整数
+ * - `trials.csv`：フレーズ入力で最後まで終えた試行の結果。やり直した・中止した試行は行がない
+ * - `prompts.csv`：データ収集で提示した打鍵と、提示した時刻（frames.csv と同じ時計）。単語のときは 1 打鍵 1 行
  */
 class SessionLog(val dir: File) {
-    private val frames: BufferedWriter
-    private val trials: BufferedWriter
+    private val writers = mutableMapOf<String, BufferedWriter>()
 
-    init {
+    private fun writer(name: String, header: String): BufferedWriter = writers.getOrPut(name) {
         dir.mkdirs()
-        frames = File(dir, FRAMES).bufferedWriter()
-        trials = File(dir, TRIALS).bufferedWriter()
-        frames.write(FRAME_HEADER + "\n")
-        trials.write(TRIAL_HEADER + "\n")
+        File(dir, name).bufferedWriter().also { it.write(header + "\n") }
     }
 
     fun frame(attempt: Int, tMs: Long, tip: TipFrame?, touching: Boolean, action: KeyAction?) {
-        frames.write(formatFrame(attempt, tMs, tip, touching, action) + "\n")
+        writer(FRAMES, FRAME_HEADER).write(formatFrame(attempt, tMs, tip, touching, action) + "\n")
+    }
+
+    fun joints(attempt: Int, tMs: Long, kbTracked: Boolean, typeTracked: Boolean, values: FloatArray) {
+        val w = writer(JOINTS, "attempt,t,kbTracked,typeTracked," + HandKeyboard.JOINT_COLUMNS.joinToString(","))
+        val sb = StringBuilder()
+        sb.append(attempt).append(',').append(tMs).append(',').append(if (kbTracked) 1 else 0).append(',').append(if (typeTracked) 1 else 0)
+        for (v in values) {
+            sb.append(',')
+            if (!v.isNaN()) sb.append((v * 1e5f).roundToInt())
+        }
+        w.write(sb.append('\n').toString())
     }
 
     fun trial(r: TrialResult, palmSurface: Float?) {
-        trials.write(formatTrial(r, palmSurface) + "\n")
-        trials.flush()
-        frames.flush()
+        writer(TRIALS, TRIAL_HEADER).write(formatTrial(r, palmSurface) + "\n")
+        flush()
     }
 
-    fun close() {
-        frames.close()
-        trials.close()
+    fun prompt(p: PromptCollection.Prompt) {
+        writer(PROMPTS, PROMPT_HEADER).write(
+            listOf(p.attempt, p.index, p.tMs, p.row, p.col, p.dir.name, quote(p.label), p.detector.name, quote(p.word), p.pos).joinToString(",") + "\n"
+        )
     }
+
+    fun flush() = writers.values.forEach { it.flush() }
+
+    fun close() = writers.values.forEach { it.close() }
 
     /** 記録から読み戻した 1 フレーム。tip == null は指先を見失ったか、キーボードが非表示。 */
     data class Frame(val attempt: Int, val tMs: Long, val tip: TipFrame?, val touching: Boolean, val action: String)
@@ -52,6 +67,10 @@ class SessionLog(val dir: File) {
     companion object {
         const val FRAMES = "frames.csv"
         const val TRIALS = "trials.csv"
+        const val JOINTS = "joints.csv"
+        const val PROMPTS = "prompts.csv"
+        /** word・pos は単語の提示のとき（同じ単語の打鍵は index・t が同じで、pos が単語の中での順番） */
+        private const val PROMPT_HEADER = "attempt,index,t,row,col,dir,label,detector,word,pos"
         private const val FRAME_HEADER = "attempt,t,tracked,x,y,h,width,height,touchMeters,touching,action"
         private const val TRIAL_HEADER =
             "attempt,trial,target,typed,seconds,errors,score,offsetX,offsetY,offsetZ,widthScale,heightScale,roll,tilt,yaw,touchMeters,palmSurface,detector"

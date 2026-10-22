@@ -23,6 +23,21 @@ class SessionLogTest {
         assertEquals("", lost.action)
     }
 
+    @Test fun jointsAreWrittenOnlyWhenUsed() {
+        val dir = tmp.newFolder("joints")
+        val log = SessionLog(dir)
+        val v = FloatArray(HandKeyboard.JOINT_COLUMNS.size) { Float.NaN }.also { it[0] = 0.08123f; it[2] = -0.5f }
+        log.joints(1, 100L, kbTracked = true, typeTracked = false, values = v)
+        log.close()
+        assertEquals(listOf("joints.csv"), dir.list()!!.toList())
+        val lines = java.io.File(dir, "joints.csv").readLines()
+        assertEquals(HandKeyboard.JOINT_COLUMNS.size + 4, lines[0].split(",").size)
+        val row = lines[1].split(",")
+        assertEquals(listOf("1", "100", "1", "0", "8123", ""), row.take(6))
+        assertEquals("-50000", row[6])
+        assertEquals(lines[0].split(",").size, row.size)
+    }
+
     @Test fun quotedFields() {
         assertEquals(listOf("a", "b,\"c\"", "", "d\ne"), SessionLog.splitCsv("a,\"b,\"\"c\"\"\",,\"d\\ne\""))
     }

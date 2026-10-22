@@ -3,6 +3,8 @@ package com.flickxr.app
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.pm.PackageManager
+import android.media.AudioManager
+import android.media.ToneGenerator
 import android.os.Bundle
 import android.util.Log
 import androidx.activity.ComponentActivity
@@ -32,6 +34,9 @@ class MainActivity : ComponentActivity() {
     private var keyboard: HandKeyboard? = null
     private var started = false
     private lateinit var calibration: Calibration
+    private lateinit var prompts: PromptCollection
+    /** データ収集で提示が変わったことを知らせる音（画面を見続けなくても打てるように） */
+    private val beep by lazy { runCatching { ToneGenerator(AudioManager.STREAM_MUSIC, 70) }.getOrNull() }
     private var log: SessionLog? = null
 
     private val permissions = arrayOf(PERM_HAND, PERM_HEAD)
@@ -53,6 +58,16 @@ class MainActivity : ComponentActivity() {
             onTrialStart = { keyboard?.resetMode() },
             onResult = ::logTrial,
         )
+        prompts = PromptCollection(
+            scope = lifecycleScope,
+            settings = settings,
+            onReset = { keyboard?.resetMode() },
+            onPrompt = { p ->
+                beep?.startTone(ToneGenerator.TONE_PROP_BEEP, 80)
+                log { it.prompt(p); it.flush() }
+            },
+            onFinish = { log?.flush() },
+        )
 
         setContent {
             MainScreen(
@@ -61,6 +76,7 @@ class MainActivity : ComponentActivity() {
                 settings = settings,
                 message = message,
                 calibration = calibration,
+                prompts = prompts,
                 onClear = {
                     buffer.clear()
                     text.value = ""
@@ -111,7 +127,7 @@ class MainActivity : ComponentActivity() {
             session = session,
             settings = settings,
             onAction = { action ->
-                if (!calibration.onAction(action)) {
+                if (!calibration.onAction(action) && !prompts.onAction(action)) {
                     buffer.apply(action)
                     text.value = buffer.text
                 }
@@ -119,7 +135,12 @@ class MainActivity : ComponentActivity() {
             onStatus = { status.value = it },
             onTipSample = calibration::onTipSample,
             onTipFrame = { t, tip, touching, action ->
-                calibration.recordingAttempt?.let { logFrame(it, t, tip, touching, action) }
+                recording()?.let { (_, attempt) -> log { it.frame(attempt, t, tip, touching, action) } }
+            },
+            recordJoints = { recording() != null },
+            showPopup = { !prompts.active },
+            onJoints = { t, kbTracked, typeTracked, values ->
+                recording()?.let { (_, attempt) -> log { it.joints(attempt, t, kbTracked, typeTracked, values) } }
             },
         ).also { it.start(lifecycleScope) }
         message.update { "手のひらを顔に向けるとキーボードが出ます" }
@@ -131,30 +152,41 @@ class MainActivity : ComponentActivity() {
         message.value = "クリップボードにコピーしました"
     }
 
-    /**
-     * 今の自動調整のセッションの記録（`files/sessions/<開始時刻>/`）。後で判定を再生して比べたり、
-     * 誤入力の原因を切り分けたりするため。
-     */
-    private fun sessionLog(): SessionLog {
-        val dir = File(getExternalFilesDir("sessions"), calibration.sessionId.toString())
-        log?.takeIf { it.dir == dir }?.let { return it }
-        log?.close()
-        return SessionLog(dir).also { log = it }
-    }
+    /** 記録中のセッションと試行（自動調整・練習・データ収集のどれか）。記録中でなければ null */
+    private fun recording(): Pair<Long, Int>? =
+        calibration.recordingAttempt?.let { calibration.sessionId to it }
+            ?: prompts.recordingAttempt?.let { prompts.sessionId to it }
 
-    private fun logFrame(attempt: Int, tMs: Long, tip: TipFrame?, touching: Boolean, action: KeyAction?) {
-        runCatching { sessionLog().frame(attempt, tMs, tip, touching, action) }
-            .onFailure { Log.e(TAG, "failed to write frame log", it) }
+    /**
+     * 今のセッションの記録（`files/sessions/<開始時刻>/`）に書く。後で判定を再生して比べたり、学習に使ったりするため。
+     * 書けなくても入力は止めない。
+     */
+    private fun log(write: (SessionLog) -> Unit) {
+        val id = recording()?.first ?: if (prompts.active) prompts.sessionId else calibration.sessionId
+        runCatching {
+            val dir = File(getExternalFilesDir("sessions"), id.toString())
+            val l = log?.takeIf { it.dir == dir } ?: run {
+                log?.close()
+                SessionLog(dir).also { log = it }
+            }
+            write(l)
+        }.onFailure { Log.e(TAG, "failed to write session log", it) }
     }
 
     private fun logTrial(r: TrialResult) {
         Log.i(TAG, "calibration trial $r")
-        runCatching { sessionLog().trial(r, calibration.state.value.palmSurface) }
-            .onFailure { Log.e(TAG, "failed to write calibration log", it) }
+        log { it.trial(r, calibration.state.value.palmSurface) }
+    }
+
+    /** 記録はバッファしているので、裏に回ったら書き出す（そのまま終了されると末尾が欠けるため） */
+    override fun onStop() {
+        runCatching { log?.flush() }
+        super.onStop()
     }
 
     override fun onDestroy() {
         log?.close()
+        beep?.release()
         keyboard?.stop()
         super.onDestroy()
     }

@@ -2,6 +2,8 @@ package com.flickxr.app
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -43,6 +45,7 @@ fun MainScreen(
     settings: MutableStateFlow<KeyboardSettings>,
     message: StateFlow<String>,
     calibration: Calibration,
+    prompts: PromptCollection,
     onClear: () -> Unit,
     onCopy: () -> Unit,
 ) {
@@ -51,6 +54,7 @@ fun MainScreen(
     val s by settings.collectAsStateWithLifecycle()
     val msg by message.collectAsStateWithLifecycle()
     val cal by calibration.state.collectAsStateWithLifecycle()
+    val pr by prompts.state.collectAsStateWithLifecycle()
 
     fun set(f: (KeyboardSettings) -> KeyboardSettings) = settings.update(f)
 
@@ -60,7 +64,9 @@ fun MainScreen(
                 Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     Text("Flick on Hands", style = MaterialTheme.typography.titleLarge)
                     Text(msg, color = Color(0xFF9AA4B8), fontSize = 14.sp)
-                    if (cal.phase != Calibration.Phase.IDLE) {
+                    if (pr.phase != PromptCollection.Phase.IDLE) {
+                        PromptPanel(pr, prompts, Modifier.fillMaxWidth().weight(1f))
+                    } else if (cal.phase != Calibration.Phase.IDLE) {
                         CalibrationPanel(cal, calibration, t, Modifier.fillMaxWidth().weight(1f))
                     } else {
                         Text(
@@ -77,8 +83,15 @@ fun MainScreen(
                         Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             Button(onClick = onCopy) { Text("コピー") }
                             OutlinedButton(onClick = onClear) { Text("クリア") }
+                        }
+                        // 横一列だと画面からはみ出すので、記録を取るモードは 2 段目に並べる
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                             FilledTonalButton(onClick = { calibration.start(optimize = false) }) { Text("練習（記録）") }
                             FilledTonalButton(onClick = { calibration.start() }) { Text("自動調整（BO）") }
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            FilledTonalButton(onClick = { prompts.start(PromptCollection.Kind.SINGLE) }) { Text("データ収集（1 打鍵）") }
+                            FilledTonalButton(onClick = { prompts.start(PromptCollection.Kind.WORDS) }) { Text("データ収集（単語）") }
                         }
                     }
 
@@ -148,6 +161,59 @@ fun MainScreen(
 private fun mm(v: Float) = "${(v * 1000).roundToInt()} mm"
 private fun percent(v: Float) = "${(v * 100).roundToInt()} %"
 private fun deg(v: Float) = "${v.roundToInt()}°"
+
+/** データ収集の表示：提示中の打鍵を大きく、次の打鍵を小さく、テンポの進み具合を棒で出す。 */
+@Composable
+private fun PromptPanel(st: PromptCollection.State, prompts: PromptCollection, modifier: Modifier) {
+    Column(
+        modifier
+            .background(Color(0xFF1C2130), RoundedCornerShape(12.dp))
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text("データ収集  ${st.index} / ${st.total}", style = MaterialTheme.typography.titleMedium)
+        when (st.phase) {
+            PromptCollection.Phase.COUNTDOWN, PromptCollection.Phase.RUNNING -> {
+                Text(
+                    when {
+                        st.kind == PromptCollection.Kind.WORDS && st.phase == PromptCollection.Phase.COUNTDOWN ->
+                            "まもなく始まります。表示された単語を、普段の速さで続けて 1 回打ってください（間違えても直さない）"
+                        st.kind == PromptCollection.Kind.WORDS -> "表示された単語を続けて 1 回打つ（間違えても直さない）"
+                        st.phase == PromptCollection.Phase.COUNTDOWN -> "まもなく始まります。表示された文字を、表示が変わるたびに 1 回ずつ打ってください（間違えても直さない）"
+                        else -> "表示された文字を 1 回打つ（間違えても直さない）"
+                    },
+                    fontSize = 14.sp,
+                    color = Color(0xFF9AA4B8),
+                )
+                Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+                    Text(st.current.ifEmpty { "　" }, fontSize = 72.sp, color = Color.White)
+                    Text("次: ${st.next}", fontSize = 26.sp, color = Color(0xFF7A8396))
+                }
+                Box(Modifier.fillMaxWidth().height(6.dp).background(Color(0xFF2A3042), RoundedCornerShape(3.dp))) {
+                    Box(Modifier.fillMaxWidth(st.progress.coerceIn(0f, 1f)).height(6.dp).background(Color(0xFF7FA8FF), RoundedCornerShape(3.dp)))
+                }
+                if (st.kind == PromptCollection.Kind.SINGLE) Text("判定: ${st.detected}", fontSize = 13.sp, color = Color(0xFF7A8396))
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(
+                        if (st.kind == PromptCollection.Kind.WORDS) "1 文字 %.2f 秒".format(st.perStrokeMs / 1000f) else "テンポ %.1f 秒".format(st.intervalMs / 1000f),
+                        fontSize = 13.sp, color = Color(0xFFCDD3E0),
+                    )
+                    OutlinedButton(onClick = { prompts.changeInterval(-100) }) { Text("速く") }
+                    OutlinedButton(onClick = { prompts.changeInterval(100) }) { Text("遅く") }
+                    OutlinedButton(onClick = prompts::cancel) { Text("中止") }
+                }
+            }
+            PromptCollection.Phase.DONE -> {
+                Text("終わりました。記録は端末の files/sessions に残っています", fontSize = 14.sp)
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Button(onClick = { val k = st.kind; prompts.close(); prompts.start(k) }) { Text("もう 1 回") }
+                    OutlinedButton(onClick = prompts::close) { Text("終了") }
+                }
+            }
+            PromptCollection.Phase.IDLE -> Unit
+        }
+    }
+}
 
 /** 自動調整中の表示：入力するフレーズ、入力中の文字列、残り時間、これまでの結果。 */
 @Composable
