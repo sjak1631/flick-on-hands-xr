@@ -49,6 +49,8 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        StrokeModel.instance = runCatching { assets.open("stroke_model.txt").use(StrokeModel::parse) }
+            .onFailure { Log.e(TAG, "failed to load stroke model", it) }.getOrNull()
         val store = SettingsStore(this)
         settings.value = store.load()
         lifecycleScope.launch { settings.collect(store::save) }

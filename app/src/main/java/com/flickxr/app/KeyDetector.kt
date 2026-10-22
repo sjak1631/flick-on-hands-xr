@@ -23,11 +23,13 @@ data class TipFrame(
     val flickThresholdMeters: Float get() = minOf(widthMeters / FlickLayout.COLS, heightMeters / FlickLayout.ROWS) * 0.4f
 }
 
-enum class DetectorType(val label: String) { SLIDE("スライド"), THRESHOLD("押してずらす") }
+enum class DetectorType(val label: String) { SLIDE("スライド"), THRESHOLD("押してずらす"), LEARNED("学習") }
 
+/** LEARNED はモデル（[StrokeModel.instance]）が読めていなければスライド判定で代わりにする */
 fun DetectorType.create(): KeyDetector = when (this) {
     DetectorType.SLIDE -> SlideDetector()
     DetectorType.THRESHOLD -> ThresholdDetector()
+    DetectorType.LEARNED -> StrokeModel.instance?.let(::LearnedDetector) ?: SlideDetector()
 }
 
 /** 指先の動きから打鍵を判定する。XR に依存しないので、記録した軌跡を JVM で再生できる。 */

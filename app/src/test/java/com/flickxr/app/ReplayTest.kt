@@ -15,6 +15,10 @@ import java.io.File
  * 結果は標準出力と `<replayDir>/replay-report.txt` に出す。replayDir を指定しないときは何もしない。
  */
 class ReplayTest {
+    init {
+        StrokeModel.instance = StrokeModelTest.load()
+    }
+
     /** 実機で選べる判定と、数値を変えた候補（判定の数値を詰めるときにここへ足す） */
     private val detectors: List<Pair<String, () -> KeyDetector>> =
         DetectorType.entries.map { it.name to it::create } + listOf(
